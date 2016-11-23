@@ -8,6 +8,8 @@
 
 #import "RNDeviceInfo.h"
 #import "DeviceUID.h"
+#import <mach/mach.h>
+#import <mach/mach_host.h>
 
 @interface RNDeviceInfo()
 
@@ -19,6 +21,58 @@
 }
 
 RCT_EXPORT_MODULE()
+
+RCT_EXPORT_METHOD(memory:
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+    mach_port_t host_port;
+    mach_msg_type_number_t host_size;
+    vm_size_t pagesize;
+    
+    host_port = mach_host_self();
+    host_size = sizeof(vm_statistics_data_t) / sizeof(integer_t);
+    host_page_size(host_port, &pagesize);
+    
+    vm_statistics_data_t vm_stat;
+    
+    if (host_statistics(host_port, HOST_VM_INFO, (host_info_t)&vm_stat, &host_size) != KERN_SUCCESS) {
+        NSString* err = @"Failed to fetch vm statistics";
+        NSLog(err);
+        reject(@"error", err, nil);
+    }
+
+    /* Stats in bytes */
+    natural_t mem_used = (vm_stat.active_count +
+                          vm_stat.inactive_count +
+                          vm_stat.wire_count) * pagesize;
+    natural_t mem_free = vm_stat.free_count * pagesize;
+    natural_t mem_total = mem_used + mem_free;
+    //NSLog(@"used: %u free: %u total: %u", mem_used, mem_free, mem_total);
+
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t size = MACH_TASK_BASIC_INFO_COUNT;
+    kern_return_t kerr = task_info(mach_task_self(),
+                                   MACH_TASK_BASIC_INFO,
+                                   (task_info_t)&info,
+                                   &size);
+
+    if(kerr == KERN_SUCCESS ) {
+        //NSLog(@"Memory in use (in bytes): %u", info.resident_size);
+        resolve(@{
+                  @"resident_size": [NSString stringWithFormat: @"%u", info.resident_size],
+                  @"virtual_size": [NSString stringWithFormat: @"%u", info.virtual_size],
+                  @"mem_used": [NSString stringWithFormat: @"%u", mem_used],
+                  @"mem_free": [NSString stringWithFormat: @"%u", mem_free],
+                  @"mem_total": [NSString stringWithFormat: @"%u", mem_total],
+                  });
+    } else {
+        NSString* err = [NSString stringWithFormat: @"Error with task_info(): %s", mach_error_string(kerr)];
+        NSLog(err);
+        reject(@"error", err, nil);
+    }
+    
+}
 
 - (dispatch_queue_t)methodQueue
 {
